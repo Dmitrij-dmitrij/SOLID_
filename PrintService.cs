@@ -1,4 +1,6 @@
-﻿using System.IO.Compression;
+﻿using System.Collections.Generic;
+using System;
+using System.IO.Compression;
 using System.Text;
 
 namespace Innotech31.Task
@@ -338,9 +340,48 @@ namespace Innotech31.Task
 			if (pdf == null)
                 throw new Exception($"Ошибка при формировании печатной формы документа.");
 
-            return AddStampToPdf(pdf, documentIndefNumber, documentRegisteredDateTime, certificate, proxyData);
+            var PdfWithStamp = new StampService;
+
+            return PdfWithStamp.AddStampToPdf(pdf, documentIndefNumber, documentRegisteredDateTime, certificate, proxyData);
         }
 
+        
+
+        private static byte[] AddPdfFilesToZip(Dictionary<string, byte[]> entries, string documentIndefNumber, DateTime? documentRegisteredDateTime, Dictionary<string, string> certificate)
+        {
+            using (var zipResponse = new MemoryStream())
+            {
+                using (var zipFileResponse = new ZipArchive(zipResponse, ZipArchiveMode.Create))
+                {
+                    foreach (var item in entries)
+                    {
+                        PrintServiceSupportedFileType entryDetectedFileType = DetectFileType(item.Key);
+                        if (entryDetectedFileType != PrintServiceSupportedFileType.Unknown)
+                        {
+                            // Превращаем его в PDF
+                            var pdf = ConvertInputFileToPdf(item.Value, entryDetectedFileType);
+                            pdf = new StampService.AddStampToPdf(pdf, documentIndefNumber, documentRegisteredDateTime, certificate);
+                            var fileName = item.Key.Remove(item.Key.LastIndexOf('.'));
+                            var file = zipFileResponse.CreateEntry(fileName + "_ПечатнаяФорма.pdf");
+                            using (var stream = file.Open())
+                            {
+                                using (var fileMemoryStream = new MemoryStream(pdf))
+                                {
+                                    fileMemoryStream.WriteTo(stream);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return zipResponse.ToArray();
+            }
+        }
+    }
+
+
+    public static class StampService
+    {
         public static byte[] AddStampToPdf(byte[] pdf, string documentIndefNumber, DateTime? documentRegisteredDateTime, Dictionary<string, string> certificate = null, Dictionary<string, string> proxyData = null)
         {
             var documentRegisteredDateTimeString = documentRegisteredDateTime.HasValue
@@ -375,7 +416,7 @@ namespace Innotech31.Task
                 proxyData.TryGetValue("ProxyNum", out proxyNum);
                 proxyData.TryGetValue("StartDate", out proxyStartDate);
                 proxyData.TryGetValue("EndDate", out proxyEndDate);
-                proxyLine = $"Доверенность №{ proxyNum}. Действительна c { proxyStartDate} по { proxyEndDate}.";
+                proxyLine = $"Доверенность №{proxyNum}. Действительна c {proxyStartDate} по {proxyEndDate}.";
             }
 
             var separateLine = new string('_', 141);
@@ -384,7 +425,7 @@ namespace Innotech31.Task
             watermarkText.AppendLine("");
             watermarkText.AppendLine($"Документ {documentIndefNumber} от {documentRegisteredDateTimeString} зарегистрирован. Документ подписан электронной подписью:   ");
             watermarkText.AppendLine("");
-            
+
             if (string.IsNullOrWhiteSpace(organization) == false)
             {
                 watermarkText.AppendLine($"{organization} ОГРН {ogrn}");
@@ -392,42 +433,11 @@ namespace Innotech31.Task
 
             watermarkText.AppendLine($"{surName} {givenName}. {proxyLine}");
             watermarkText.AppendLine($"Серийный номер сертификата {certificateSerialNumber}. Действителен c {startDataSertificate} по {endDataSertificate} ");
-            
+
             // Ставим штамп с номером документа
             byte[] watermarkedPdf = AddWatermarkToPdf(pdf, watermarkText.ToString());
 
             return watermarkedPdf;
-        }
-
-        private static byte[] AddPdfFilesToZip(Dictionary<string, byte[]> entries, string documentIndefNumber, DateTime? documentRegisteredDateTime, Dictionary<string, string> certificate)
-        {
-            using (var zipResponse = new MemoryStream())
-            {
-                using (var zipFileResponse = new ZipArchive(zipResponse, ZipArchiveMode.Create))
-                {
-                    foreach (var item in entries)
-                    {
-                        PrintServiceSupportedFileType entryDetectedFileType = DetectFileType(item.Key);
-                        if (entryDetectedFileType != PrintServiceSupportedFileType.Unknown)
-                        {
-                            // Превращаем его в PDF
-                            var pdf = ConvertInputFileToPdf(item.Value, entryDetectedFileType);
-                            pdf = AddStampToPdf(pdf, documentIndefNumber, documentRegisteredDateTime, certificate);
-                            var fileName = item.Key.Remove(item.Key.LastIndexOf('.'));
-                            var file = zipFileResponse.CreateEntry(fileName + "_ПечатнаяФорма.pdf");
-                            using (var stream = file.Open())
-                            {
-                                using (var fileMemoryStream = new MemoryStream(pdf))
-                                {
-                                    fileMemoryStream.WriteTo(stream);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                return zipResponse.ToArray();
-            }
         }
     }
 }
